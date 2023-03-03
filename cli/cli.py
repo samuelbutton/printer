@@ -3,7 +3,7 @@ import argparse
 import logging
 from typing import Callable, List
 
-from .commands import some_command
+from downloading import downloading
 
 _logger = logging.getLogger(__name__)
 
@@ -15,7 +15,9 @@ USAGE = "tbd"
 
 
 class CLI:
-    SUBCOMMANDS: List[Callable[argparse._SubParsersAction], None] = []
+    SUBCOMMANDS: List[Callable[argparse._SubParsersAction], None] = [
+        downloading_cmd,
+    ]
 
     def __init__(self) -> None:
         self.parser = self._create_parser()

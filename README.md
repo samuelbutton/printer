@@ -1,1 +1,2 @@
-# A repo for backtesting trading strategies.
+# Printer
+A system that helps the user to print money.
