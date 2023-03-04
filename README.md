@@ -1,2 +1,2 @@
 # Printer
-A system that helps the user to print money.
+A system that helps the user to print money (not counterfeiting).
