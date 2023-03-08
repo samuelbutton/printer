@@ -1,2 +1,2 @@
 # Printer
-A system that helps the user to print money (not counterfeiting).
+A system that helps the user to print money (not counterfeiting just algo trading).
