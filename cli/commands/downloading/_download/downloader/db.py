@@ -1,21 +1,22 @@
 from abc import abstractmethod
 from datetime import datetime
+from typing import List, Tuple
 from typing_extensions import Protocol
 
 import pandas as pd
 
 
-class PriceDatabaseInterface(Protocol):
+class DatabaseInterface(Protocol):
     @abstractmethod
-    def add_entry(self, symbol: str, dt: datetime, price: float) -> None:
-        "add an entry for a price"
+    def add_entry(self, symbol: str, dt: datetime, entry: object) -> None:
+        "add an entry"
 
     @abstractmethod
-    def add_rows(self, new_rows_df: pd.DataFrame) -> None:
+    def add_rows(self, symbol: str, new_rows: List[Tuple[datetime, object]]) -> None:
         "add a set of rows to the db"
 
     @abstractmethod
-    def add_symbol(self, symbol: str) -> None:
+    def add_symbol(self, symbol: str, entry_type: str) -> None:
         "add a row for a certain symbol"
 
     @abstractmethod
@@ -34,19 +35,25 @@ class PriceDatabaseInterface(Protocol):
     def load(self, filepath: str) -> None:
         "load database from memory"
 
+    @abstractmethod
+    def save(self, filepath: str) -> None:
+        "save database to memory"
 
-class DataframeDatabase(PriceDatabaseInterface):
+
+class DataframeDatabase(DatabaseInterface):
     def __init__(self):
         self._df = pd.DataFrame()
 
-    def add_entry(self, symbol: str, dt: datetime, price: float) -> None:
-        self._df[symbol][dt] = price
+    def add_entry(self, symbol: str, dt: datetime, entry: object) -> None:
+        if entry is None:
+            return
+        self._df[symbol][dt] = entry
 
-    def add_rows(self, new_rows_df: pd.DataFrame) -> None:
-        self._df = pd.concat([new_rows_df, self._df])
+    def add_rows(self, symbol: str, new_rows: List[Tuple[datetime, object]]) -> None:
+        self._df = pd.concat([to_df(symbol, new_rows), self._df])
 
-    def add_symbol(self, symbol: str) -> None:
-        self._df[symbol] = pd.Series(dtype="float64")
+    def add_symbol(self, symbol: str, entry_type: str) -> None:
+        self._df[symbol] = pd.Series(dtype=entry_type)
 
     def contains(self, symbol: str, dtime: datetime) -> bool:
         return (
@@ -63,3 +70,16 @@ class DataframeDatabase(PriceDatabaseInterface):
 
     def load(self, filepath: str) -> None:
         self._df = pd.read_parquet(filepath)
+
+    def save(self, filepath: str) -> None:
+        self._df.to_parquet(filepath)
+
+
+def to_df(symbol: str, datetime_list: List[Tuple[datetime, object]]) -> pd.DataFrame:
+    df = pd.DataFrame()
+    for dt, obj in datetime_list:
+        df = pd.concat(
+            [df, pd.DataFrame({symbol: {dt: obj}})],
+            ignore_index=False,
+        )
+    return df

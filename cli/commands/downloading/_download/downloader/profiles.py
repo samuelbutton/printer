@@ -4,12 +4,7 @@ import logging
 from os.path import exists
 from typing import Dict, List, Optional, Set, Tuple
 
-from alpaca.data import (
-    StockBarsRequest,
-    StockHistoricalDataClient,
-    TimeFrame,
-    TimeFrameUnit,
-)
+from polygon import RESTClient
 import pandas as pd
 from pandas_market_calendars.calendar_registry import MarketCalendar
 import pytz
@@ -18,21 +13,21 @@ from ..configs.download import DownloadConfig
 from .downloader import Downloader
 from .db import DatabaseInterface, DataframeDatabase
 from .utils import (
-    LoadMarketCalendarConfig,
-    load_market_calendar,
+    datetime_key,
+    load_quarterly_calender,
     to_datetime_mapping,
 )
 
 _logger = logging.getLogger(__name__)
 
 
-class PricesDownloader(Downloader):
+class ProfilesDownloader(Downloader):
     def __init__(self, cfg: DownloadConfig):
         self.cfg: DownloadConfig = cfg
         if cfg.symbols_limit is not None:
             self.cfg.symbols = self.cfg.symbols[: cfg.symbols_limit]
 
-        self._alpaca_client: Optional[StockHistoricalDataClient] = None
+        self._polygon_client: Optional[RESTClient] = None
 
         self._database: Optional[DatabaseInterface] = None
         if cfg.use_existing_db and exists(cfg.database_filepath):
@@ -40,24 +35,14 @@ class PricesDownloader(Downloader):
             self._database = DataframeDatabase()
             self._database.load(cfg.database_filepath)
 
-        self.market_calendar = load_market_calendar(
-            LoadMarketCalendarConfig(
-                start_date=str(
-                    datetime.now() - timedelta(days=round(cfg.years_examined * 365))
-                ),
-                end_date=str(datetime.now() - timedelta(days=1)),
-            ),
-        )
+        self.target_datetimes = load_quarterly_calender(cfg.years_examined)
 
     @property
-    def alpaca_client(self) -> StockHistoricalDataClient:
-        if self._alpaca_client is None:
-            _logger.info("loading alpaca client")
-            self._alpaca_client = StockHistoricalDataClient(
-                api_key=self.cfg.alpaca_key_id,
-                secret_key=self.cfg.alpaca_secret_key,
-            )
-        return self._alpaca_client
+    def polygon_client(self) -> RESTClient:
+        if self._polygon_client is None:
+            _logger.info("loading polygon client")
+            self._polygon_client = RESTClient(api_key=self.cfg.polygon_api_key)
+        return self._polygon_client
 
     @property
     def database(self) -> DatabaseInterface:
@@ -71,21 +56,20 @@ class PricesDownloader(Downloader):
         cfg = GetDatabaseMissesConfig(
             symbol=symbol,
             database=self.database,
-            market_calendar=self.market_calendar,
+            datetimes=self.target_datetimes,
         )
         cfg.set_defaults()
-        return get_price_misses(cfg)
+        return get_profile_misses(cfg)
 
     def pull_missing_data(
         self, symbol: str, missing_datetimes: List[datetime]
     ) -> List[Tuple[datetime, object]]:
         _logger.debug(f"Pulling missing data: {symbol}")
-        return get_prices(
-            GetPricesConfig(
+        return get_profiles(
+            GetProfilesConfig(
                 symbol,
-                self.alpaca_client,
-                missing_datetimes[0],
-                missing_datetimes[-1],
+                self.polygon_client,
+                missing_datetimes,
             )
         )
 
@@ -98,13 +82,13 @@ class PricesDownloader(Downloader):
         if pulled_data is None or len(missing_datetimes) == 0 or len(pulled_data) == 0:
             return
 
-        dt_to_price = to_datetime_mapping(pulled_data)
+        dt_to_profile = to_datetime_mapping(pulled_data)
 
         cfg = UpdateDatabaseConfig(
             symbol,
             self.database,
             missing_datetimes,
-            dt_to_price,
+            dt_to_profile,
             self.cfg.database_entry_type,
         )
         update_count = fill_new_entries(cfg)
@@ -178,13 +162,9 @@ def get_ignored_sp500_symbols():
 class GetDatabaseMissesConfig:
     symbol: str
     database: DatabaseInterface
-    market_calendar: MarketCalendar
+    datetimes: List[datetime]
     ignored_date_strs: Set[str] = None
     ignored_symbols: Set[str] = None
-    evaluation_hours: int = 6.5
-    record_frequency_minutes: int = 12
-    start_evaluation_time_str: str = "09:30:00"
-    timezone: pytz.timezone = pytz.timezone("US/Eastern")
     years_examined: int = 5
 
     def set_defaults(self):
@@ -192,57 +172,36 @@ class GetDatabaseMissesConfig:
         self.ignored_symbols = get_ignored_sp500_symbols()
 
 
-def get_price_misses(cfg: GetDatabaseMissesConfig) -> List[datetime]:
+def get_profile_misses(cfg: GetDatabaseMissesConfig) -> List[datetime]:
     missing_dt_lst = []
 
-    for opening_dt in cfg.market_calendar:
-        base_dt = cfg.timezone.localize(
-            datetime.strptime(
-                f"{opening_dt.date()} {cfg.start_evaluation_time_str}",
-                "%Y-%m-%d %H:%M:%S",
-            )
-        )
-        for i in range(round(cfg.evaluation_hours * cfg.record_frequency_minutes) + 1):
-            loop_dt = base_dt + timedelta(minutes=i * 60 / cfg.record_frequency_minutes)
-            if (
-                cfg.symbol not in cfg.ignored_symbols
-                and str(loop_dt.date()) not in cfg.ignored_date_strs
-                and not cfg.database.contains(cfg.symbol, loop_dt)
-            ):
-                missing_dt_lst.append(loop_dt)
+    for dt in cfg.datetimes:
+        if not cfg.database.contains(cfg.symbol, dt):
+            missing_dt_lst.append(dt)
 
     return missing_dt_lst
 
 
 @dataclass
-class GetPricesConfig:
+class GetProfilesConfig:
     symbol: str
-    stock_historical_data_client: StockHistoricalDataClient
-    start_datetime: datetime
-    end_datetime: datetime
-    time_frame_amount: int = 1
-    time_frame_unit: TimeFrameUnit = TimeFrameUnit("Min")
+    polygon_client: RESTClient
+    datetimes: List[datetime]
 
 
-def get_prices(cfg: GetPricesConfig) -> List[Tuple[datetime, object]]:
-    try:
-        return [
-            (entry["timestamp"], entry)
-            for entry in cfg.stock_historical_data_client.get_stock_bars(
-                StockBarsRequest(
-                    symbol_or_symbols=cfg.symbol,
-                    start=cfg.start_datetime,
-                    end=cfg.end_datetime,
-                    timeframe=TimeFrame(
-                        amount=cfg.time_frame_amount,
-                        unit=cfg.time_frame_unit,
-                    ),
-                )
-            ).dict()[cfg.symbol]
-        ]
-    except AttributeError as e:
-        _logger.warning(f"get_prices for {cfg.symbol} was not successful", e)
-    return None
+def get_profiles(cfg: GetProfilesConfig) -> List[Tuple[datetime, object]]:
+    profiles: List[Tuple[datetime, object]] = []
+    for dt in cfg.datetimes:
+        val = cfg.polygon_client.get_ticker_details(
+            ticker=cfg.symbol, date=str(dt.date())
+        )
+        if val is None:
+            _logger.warn(f"None when pulling profile for {dt} {cfg.symbol}")
+            continue
+        profiles.append(
+            (dt, {"total_employees": val.total_employees, "market_cap": val.market_cap})
+        )
+    return profiles
 
 
 @dataclass
@@ -250,16 +209,6 @@ class ExtractPriceConfig:
     database: DatabaseInterface
     target_datetime: datetime
     datetime_to_data: Dict[datetime, object]
-
-
-def extract_price(cfg: ExtractPriceConfig) -> float:
-    price = 0
-    for i in [0, 1, -1, 2, -2, 3, -3, 4, -4]:
-        new_dt = cfg.target_datetime + timedelta(minutes=i)
-        key = datetime_key(new_dt)
-        if key in cfg.datetime_to_data:
-            return cfg.datetime_to_data[key]["close"]
-    return None
 
 
 @dataclass
@@ -283,9 +232,9 @@ def fill_new_entries(
             if not cfg.database.contains_symbol(cfg.symbol):
                 cfg.database.add_symbol(cfg.symbol, cfg.entry_type)
 
-            price = extract_price(cfg.to_extract_price_config(dt))
-            if price is not None:
-                cfg.database.add_entry(cfg.symbol, dt, price)
+            profile = cfg.datetime_to_data[datetime_key(dt)]
+            if profile is not None:
+                cfg.database.add_entry(cfg.symbol, dt, profile)
                 update_count += 1
     return update_count
 
@@ -295,7 +244,7 @@ def generate_new_rows(cfg: UpdateDatabaseConfig) -> List[Tuple[datetime, object]
     new_rows = []
     for idx, dt in enumerate(cfg.missing_datetimes):
         if not cfg.database.contains_datetime(dt):
-            price = extract_price(cfg.to_extract_price_config(dt))
-            if price is not None:
-                new_rows += [(dt, price)]
+            profile = cfg.datetime_to_data[datetime_key(dt)]
+            if profile is not None:
+                new_rows += [(dt, profile)]
     return new_rows

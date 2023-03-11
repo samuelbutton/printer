@@ -38,8 +38,10 @@ def _download_func(args: argparse.Namespace) -> None:
 
     downloader = build_downloader(CONFIG_CHOICES[args.config])
 
-    missing_data = downloader.find_missing_data()
+    for symbol in downloader.symbols():
+        missing_dts = downloader.find_missing_dates(symbol)
+        if len(missing_dts) == 0:
+            continue
 
-    for symbol, missing_dts in missing_data:
-        missing_data = downloader.pull_missing_data(symbol, missing_dts)
-        downloader.save_to_database(symbol, missing_dts, missing_data)
+        pulled_data = downloader.pull_missing_data(symbol, missing_dts)
+        downloader.save_to_database(symbol, missing_dts, pulled_data)

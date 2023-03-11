@@ -10,20 +10,22 @@ import pandas as pd
 
 class DownloaderEnum(Enum):
     PricesDownloader = "PricesDownloader"
-    # ProfilesDownloader="ProfilesDownloader"
+    ProfilesDownloader = "ProfilesDownloader"
     # FinancialsDownloader="FinancialsDownloader"
 
 
 @dataclass
 class DownloadConfig:
-    alpaca_key_id: str
-    alpaca_secret_key: str
     database_filepath: str
     downloader_enum: DownloaderEnum
     symbols: List[str]
     use_existing_db: bool
     years_examined: int
+    database_entry_type: str
     symbols_limit: int = None
+    alpaca_key_id: str = None
+    alpaca_secret_key: str = None
+    polygon_api_key: str = None
 
 
 CONFIG_CHOICES = {
@@ -35,9 +37,18 @@ CONFIG_CHOICES = {
         symbols=pd.read_csv("./data/sp500_equity_symbols.csv")["Symbol"],
         use_existing_db=True,
         years_examined=5,
-        # setting for debugging
-        symbols_limit=5,
+        symbols_limit=10,
+        database_entry_type="float64",
     ),
-    # "sp500_equity_profiles":
+    "sp500_equity_profiles": DownloadConfig(
+        polygon_api_key=os.environ.get("POLYGON_API_KEY"),
+        database_filepath="./data/sp500_equity_profiles.parquet",
+        downloader_enum=DownloaderEnum.ProfilesDownloader,
+        symbols=pd.read_csv("./data/sp500_equity_symbols.csv")["Symbol"],
+        use_existing_db=True,
+        years_examined=5,
+        symbols_limit=5,
+        database_entry_type="object",
+    ),
     # "sp500_equity_financials":
 }
