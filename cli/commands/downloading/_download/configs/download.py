@@ -11,7 +11,7 @@ import pandas as pd
 class DownloaderEnum(Enum):
     PricesDownloader = "PricesDownloader"
     ProfilesDownloader = "ProfilesDownloader"
-    # FinancialsDownloader="FinancialsDownloader"
+    FinancialsDownloader = "FinancialsDownloader"
 
 
 @dataclass
@@ -50,5 +50,14 @@ CONFIG_CHOICES = {
         symbols_limit=5,
         database_entry_type="object",
     ),
-    # "sp500_equity_financials":
+    "sp500_equity_financials": DownloadConfig(
+        polygon_api_key=os.environ.get("POLYGON_API_KEY"),
+        database_filepath="./data/sp500_equity_financials.parquet",
+        downloader_enum=DownloaderEnum.FinancialsDownloader,
+        symbols=pd.read_csv("./data/sp500_equity_symbols.csv")["Symbol"],
+        use_existing_db=True,
+        years_examined=5,
+        symbols_limit=5,
+        database_entry_type="object",
+    ),
 }

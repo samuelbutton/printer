@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import logging
 from typing import Dict, List, Tuple
 
 import pandas as pd
 from pandas_market_calendars import get_calendar
 from pandas_market_calendars.calendar_registry import MarketCalendar
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,6 +32,9 @@ def to_datetime_mapping(
         key = datetime_key(dt)
 
         if key in mapping:
+            import pdb
+
+            pdb.set_trace()
             _logger.warn(
                 f"found a duplicate datetime key while building mapping: ({str(key)}, {obj})"
             )
